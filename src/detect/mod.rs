@@ -64,10 +64,11 @@ pub enum Agent {
     Qwen,
     Maki,
     Muse,
+    Senpi,
 }
 
 impl Agent {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -91,9 +92,10 @@ impl Agent {
         Self::Qwen,
         Self::Maki,
         Self::Muse,
+        Self::Senpi,
     ];
 
-    pub const SCREEN_MANIFEST_AGENTS: [Self; 21] = [
+    pub const SCREEN_MANIFEST_AGENTS: [Self; 22] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -115,6 +117,7 @@ impl Agent {
         Self::Qwen,
         Self::Maki,
         Self::Muse,
+        Self::Senpi,
     ];
 }
 
@@ -143,6 +146,14 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::Qwen => "qwen",
         Agent::Maki => "maki",
         Agent::Muse => "muse",
+        Agent::Senpi => "omo",
+    }
+}
+
+pub(crate) fn agent_manifest_id(agent: Agent) -> &'static str {
+    match agent {
+        Agent::Senpi => "senpi",
+        _ => agent_label(agent),
     }
 }
 
@@ -177,6 +188,7 @@ pub fn interactive_agent_executable(agent: Agent) -> &'static str {
         Agent::Qwen => "qwen",
         Agent::Maki => "maki",
         Agent::Muse => "muse",
+        Agent::Senpi => "omo",
     }
 }
 
@@ -215,6 +227,7 @@ fn lookup_agent(name: &str) -> Option<Agent> {
         "qodercli" | "qoderclicn" | "qoder" | "qodercn" => Some(Agent::Qodercli),
         "qwen" | "qwen-code" | "qwen code" => Some(Agent::Qwen),
         "maki" => Some(Agent::Maki),
+        "senpi" | "omo" | "omo-senpi" | "omo-native" => Some(Agent::Senpi),
         "muse" | "muse-code" | "muse-cli" => Some(Agent::Muse),
         _ if is_muse_versioned_binary(name) => Some(Agent::Muse),
         _ => None,
@@ -637,6 +650,11 @@ fn agent_name_from_known_package_path(path: &str) -> Option<String> {
         .map(normalized_agent_lookup_name)
         .collect();
     for window in components.windows(5) {
+        if window == ["node_modules", "@code-yeongyu", "senpi", "dist", "cli"]
+            || window == ["node_modules", "@code-yeongyu", "senpi", "dist", "cli-main"]
+        {
+            return Some(agent_label(Agent::Senpi).to_string());
+        }
         if window == ["node_modules", "@qwen-code", "qwen-code", "dist", "index"] {
             return Some(agent_label(Agent::Qwen).to_string());
         }
@@ -818,6 +836,35 @@ mod tests {
     }
 
     #[test]
+    fn omo_native_process_has_canonical_identity() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 42,
+            processes: vec![foreground_process(42, "omo", &["omo"])],
+        };
+
+        let detected = identify_agent_in_job(&job).map(|(agent, _)| agent_label(agent).to_string());
+
+        assert_eq!(detected.as_deref(), Some("omo"));
+    }
+
+    #[test]
+    fn omo_kind_launches_omo_executable() {
+        let executable = parse_agent_label("omo").map(interactive_agent_executable);
+
+        assert_eq!(executable, Some("omo"));
+    }
+
+    #[test]
+    fn senpi_process_alias_uses_omo_public_identity() {
+        let agent = parse_agent_label("senpi");
+
+        assert_eq!(agent.map(agent_label), Some("omo"));
+        assert_eq!(agent.map(agent_manifest_id), Some("senpi"));
+        assert_eq!(parse_canonical_agent_label("senpi"), None);
+        assert_eq!(parse_canonical_agent_label("omo"), agent);
+    }
+
+    #[test]
     fn parse_known_agent_labels() {
         assert_eq!(parse_agent_label("pi"), Some(Agent::Pi));
         assert_eq!(parse_agent_label("claude"), Some(Agent::Claude));
@@ -886,6 +933,7 @@ mod tests {
             (Agent::Qwen, "qwen"),
             (Agent::Maki, "maki"),
             (Agent::Muse, "muse"),
+            (Agent::Senpi, "omo"),
         ];
         assert_eq!(expected.len(), Agent::ALL.len());
         for (agent, executable) in expected {
@@ -1158,6 +1206,26 @@ mod tests {
         assert_eq!(
             identify_agent_in_job(&job),
             Some((Agent::Omp, "omp".to_string()))
+        );
+    }
+
+    #[test]
+    fn identify_agent_in_job_detects_node_wrapped_senpi_package_cli() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 42,
+            processes: vec![foreground_process(
+                42,
+                "node",
+                &[
+                    "node",
+                    "/opt/homebrew/lib/node_modules/omo-ai/node_modules/@code-yeongyu/senpi/dist/cli.js",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Senpi, "omo".to_string()))
         );
     }
 

@@ -1,0 +1,176 @@
+id = "senpi"
+version = "2026.09.05.2"
+min_engine_version = 4
+updated_at = "2026-09-05T00:00:00Z"
+aliases = ["omo", "omo-senpi", "omo-native"]
+
+# Senpi powers the OmO Native coding-agent CLIs: npm @code-yeongyu/senpi
+# uses process.title / comm "senpi", while npm omo-ai exposes "omo".
+#
+# Working chrome (live herdr detection buffer, senpi 2026.8.7):
+#   "• Working (4m 27s • esc to interrupt)"
+# Context compaction uses a braille spinner and may leave overwritten text:
+#   "  ⠙ Compacting context... (esc to cancel)"
+#   "  ⠦ Compacting... (esc to cancel) ent benchmark implementation"
+# Active subagents render below the prompt box:
+#   " ⠏ Oracle review · agent:oracle(...) · turn 11 (...) · running · 3m 14s"
+# Latest source (Senpi 4df67dc87), rendered through a real Herdr PTY:
+# custom working indicators omit elapsed/interrupt hints: "⠴ Running eval".
+# Retry, branch summary, and automatic compaction use cancellation hints.
+# Default working alternates between • and ◦ without truecolor.
+# Permission prompts show
+# "Allow once" / "Allow always" / "Deny". Idle shows a bordered prompt
+# with "❯" and no interrupt suffix.
+
+[[rules]]
+id = "permission_prompt_blocked"
+state = "blocked"
+priority = 980
+region = "bottom_non_empty_lines(8)"
+visible_blocker = true
+line_regex = [
+  '^Permission required for .+$',
+  '^[ \t]*Allow once[ \t]*$',
+  '^[ \t]*Allow always[ \t]*$',
+  '^[ \t]*Deny[ \t]*$',
+]
+
+[[rules]]
+id = "permission_selector_blocked"
+state = "blocked"
+priority = 980
+region = "senpi_current_dialog"
+visible_blocker = true
+# Current Senpi replaces the editor with a selector, including a selected arrow,
+# four choices and navigation hints. Retain the legacy prompt rule above.
+line_regex = [
+  '^ Permission required: [^\n]+$',
+  '^ → (?:Allow once|Allow always|Deny|Deny with feedback)[ \t]*$',
+  '^[ \t]*(?:→ )?Allow once[ \t]*$',
+  '^[ \t]*(?:→ )?Allow always[ \t]*$',
+  '^[ \t]*(?:→ )?Deny[ \t]*$',
+  '^[ \t]*(?:→ )?Deny with feedback[ \t]*$',
+]
+regex = ['(?m)^[ \t]*↑↓[ \t\n]+navigate[ \t\n]+[^ \t\n]+[ \t\n]+select[ \t\n]+[^ \t\n]+[ \t\n]+cancel[ \t]*$']
+
+[[rules]]
+id = "permission_feedback_blocked"
+state = "blocked"
+priority = 980
+region = "senpi_current_dialog"
+visible_blocker = true
+line_regex = ['^ Feedback[ \t]*$', '^>[^\n]*$']
+regex = ['(?m)^[ \t]*[^ \t\n]+[ \t\n]+submit[ \t\n]+[^ \t\n]+[ \t\n]+cancel[ \t]*$']
+
+[[rules]]
+id = "compacting_context_working"
+state = "working"
+# Preserve goal/native attribution when compaction is displaced by widgets.
+priority = 904
+region = "senpi_current_status"
+visible_working = true
+regex = ['(?m)^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Compacting(?: context| before next prompt)?|Auto-compacting|Context overflow detected, compacting)(?:\.\.\.|…) \([^)\n]+ to cancel\)(?:[ \t]+[^\n]*)?(?:\n[^\n]*){0,3}\z']
+
+[[rules]]
+id = "retry_or_branch_summary_working"
+state = "working"
+priority = 910
+region = "senpi_current_status"
+visible_working = true
+regex = ['\A[ \t\n]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Retrying \([0-9]+/[0-9]+\)[ \t\n]+in[ \t\n]+[0-9]+s|Summarizing[ \t\n]+branch)(?:\.\.\.|…)[ \t\n]+\([^)]+[ \t\n]to[ \t\n]+cancel\)[ \t\n]*\z']
+
+[[rules]]
+id = "active_subagent_working"
+state = "working"
+priority = 905
+region = "after_last_horizontal_rule"
+visible_working = true
+line_regex = ['^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ · (?:agent|category):.+ · running ·(?: .*)?[ \t]*$']
+
+[[rules]]
+id = "detached_eval_working"
+state = "working"
+priority = 904
+region = "senpi_current_footer"
+visible_working = true
+# Detached cells are removed from this footer on settlement; transcript cell boxes
+# and passive monitor/loop status text are deliberately not activity evidence.
+line_regex = ['^[ \t]*(?:\([^)\n]*OmO Native\)[ \t]+)?↗ (?:(?:js|py|rb|jl|ruby|julia) · |eval [1-9][0-9]*: )[^\n]+ \([0-9dhms ]+\)(?:[ \t]+(?:Pursuing goal|Goal (?:paused|blocked)|[▰▱]|Loop |◉ watching|mem:)[^\n]*)?[ \t]*$']
+# A completed goal objective can exactly reproduce live-eval + goal bytes.
+# Keep the conservative result for that unresolved information collision.
+not = [{ contains = [' · Goal achieved'] }]
+
+[[rules]]
+id = "btw_answering_working"
+state = "working"
+priority = 904
+region = "senpi_current_btw_panel"
+visible_working = true
+# Match the live panel's final cancellation row, not an answer quoting that row.
+regex = ['(?m)^[ \t]*btw: [^\n]+\n(?:[^\n]*\n)*[ \t]*answering… \(Esc to cancel\)[ \t]*\n[ \t]*─{3,}[ \t]*\n?[ \t]*\z']
+
+[[rules]]
+id = "wrapped_interrupt_working"
+state = "working"
+priority = 900
+region = "senpi_current_status"
+visible_working = true
+regex = ['(?m)^[ \t]*[•◦⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Working|Running [^\n]+)[^\n]*\([^)─❯\n]*(?:\n[ \t]*[^)─❯\n]*){1,3}to interrupt\)[ \t]*$']
+
+[[rules]]
+id = "native_task_activity_working"
+state = "working"
+priority = 904
+region = "after_last_horizontal_rule"
+visible_working = true
+# Exclude both "suspended" and its eight-column rendering "suspe...".
+# Rust regex has no lookaround: other lengths, or a differing character,
+# exclude exactly these fields without hiding another live task row.
+any = [
+  { line_regex = ['^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ · (?:agent|category|model):[^\n]+ · (?:[^·\n]{1,7}|[^·\n]{10,}) · <?[0-9]+(?:ms|[smhd])(?: [0-9]+[smhd])*[ \t]*$'] },
+  { line_regex = ['^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ · (?:agent|category|model):[^\n]+ · (?:[^s·\n][^·\n]{7}|[^·\n]{1}[^u·\n][^·\n]{6}|[^·\n]{2}[^s·\n][^·\n]{5}|[^·\n]{3}[^p·\n][^·\n]{4}|[^·\n]{4}[^e·\n][^·\n]{3}|[^·\n]{5}[^\.·\n][^·\n]{2}|[^·\n]{6}[^\.·\n][^·\n]{1}|[^·\n]{7}[^\.·\n]) · <?[0-9]+(?:ms|[smhd])(?: [0-9]+[smhd])*[ \t]*$'] },
+  { line_regex = ['^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ · (?:agent|category|model):[^\n]+ · (?:[^s·\n][^·\n]{8}|[^·\n]{1}[^u·\n][^·\n]{7}|[^·\n]{2}[^s·\n][^·\n]{6}|[^·\n]{3}[^p·\n][^·\n]{5}|[^·\n]{4}[^e·\n][^·\n]{4}|[^·\n]{5}[^n·\n][^·\n]{3}|[^·\n]{6}[^d·\n][^·\n]{2}|[^·\n]{7}[^e·\n][^·\n]{1}|[^·\n]{8}[^d·\n]) · <?[0-9]+(?:ms|[smhd])(?: [0-9]+[smhd])*[ \t]*$'] },
+]
+
+[[rules]]
+id = "active_dag_working"
+state = "working"
+priority = 904
+region = "after_last_horizontal_rule"
+visible_working = true
+# Header fields may wrap at word boundaries. Only indented child rows may
+# intervene before the running node: never borrow a node from another parent.
+regex = ['(?m)^[ \t]*(?:▶ [^\n]+[ \t\n]+running|· [^\n]+[ \t\n]+resuming)[ \t\n]+wave[ \t\n]+[0-9]+/[0-9]+[ \t\n]+[0-9]+/[0-9]+[ \t\n]+done,[ \t\n]+[1-9][0-9]*[ \t\n]+running(?:,[ \t\n]+[0-9]+[ \t\n]+failed)?[ \t]*\n(?:[ \t]{3,}[^\n]*\n)*[ \t]{3,}▶ [^\n]+ · (?:agent|category):[^\n]+$']
+
+[[rules]]
+id = "goal_continuation_working"
+state = "working"
+priority = 905
+region = "senpi_current_footer"
+visible_working = true
+line_regex = ['^[ \t]*(?:\([^)\n]*OmO Native\)[^\n]*\b)?Pursuing goal(?: \([0-9dhms ]+\))?(?:[ \t]+.*)?$']
+not = [{ contains = ["Goal achieved"] }]
+
+[[rules]]
+id = "interrupt_suffix_working"
+state = "working"
+priority = 900
+region = "senpi_current_status"
+visible_working = true
+line_regex = ['^[ \t]*[•◦⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ \([^)\n]+ to interrupt\)[ \t]*$']
+
+[[rules]]
+id = "custom_tool_indicator_working"
+state = "working"
+priority = 900
+region = "senpi_current_status"
+visible_working = true
+line_regex = ['^[ \t]*[•◦●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Running [a-zA-Z0-9_.-]+(?:: [^\n]+)?[ \t]*$']
+
+[[rules]]
+id = "working_literal"
+state = "working"
+priority = 100
+region = "senpi_current_status"
+visible_working = true
+line_regex = ['^[ \t]*[•◦●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working(?: \([^)\n]+\)|…|\.\.\.)?[ \t]*$']

@@ -100,6 +100,301 @@ fn known_agent_no_match_defaults_to_idle_fallback() {
 }
 
 #[test]
+fn senpi_active_goal_continuation_is_working() {
+    let screen = "\
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+~/homelab/flash-freerouter • main • 프로젝트 5줄 설명 작성 • CH20.7% • 136K/372K (36.7%) (auto)
+(😺 OmO Native) Pursuing goal (17m) ▰▰▰▰▰▰▰▱▱▱▱▱ goal continues in 1m 50s · 1 bash on duty
+";
+
+    let explain = explain(Agent::Senpi, screen);
+
+    assert_eq!(explain.state, AgentState::Working);
+    assert!(explain.visible_working);
+    assert_eq!(
+        explain.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("goal_continuation_working")
+    );
+}
+
+#[test]
+fn senpi_pursuing_goal_without_continuation_is_working() {
+    let screen = "\
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+~/homelab/flash-freerouter • main • 프로젝트 5줄 설명 작성 • CH20.7% • 136K/372K (36.7%) (auto)
+(😺 OmO Native) Pursuing goal (17m) ▰▰▰▰▰▰▰▱▱▱▱▱
+";
+
+    let explain = explain(Agent::Senpi, screen);
+
+    assert_eq!(explain.state, AgentState::Working);
+    assert!(explain.visible_working);
+    assert_eq!(
+        explain.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("goal_continuation_working")
+    );
+}
+
+#[test]
+fn senpi_pursuing_goal_after_footer_metadata_is_working() {
+    let screen = "\
+  ⠧ Compacting... (esc to cancel)  실제 prompt submit → daemon/model → rendered response end-to-end 미검증
+
+ Todo
+ Native Panel
+ [ ] Cleanup native panel browser build resources
+ [✓] chromium patch test: add active extension close RED
+ [•] Chromium button: close active extension panel explicitly
+ [ ] Rebuild local Chromium toggle-close fix
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+(🏴‍☠️ OmO Native) • ~/github.com/minpeter/openaside • main • 리눅스 빌드 진행상황 조사 • CH99.8% • 256K/272K (94.0%) (auto) • (codex-lb) gpt-5.6-sol:high • fallback: openai-codex/gpt-5.6-sol Pursuing goal (1h 29m)
+";
+
+    let explain = explain(Agent::Senpi, screen);
+
+    assert_eq!(explain.state, AgentState::Working);
+    assert!(explain.visible_working);
+    assert_eq!(
+        explain.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("goal_continuation_working")
+    );
+}
+
+#[test]
+fn senpi_pasted_metadata_pursuing_goal_does_not_trigger_working() {
+    let screen = "\
+────────────────────────────────────────────────────────────────────────────
+❯ 이 footer가 왜 감지되지 않는지 설명해줘:
+  (🏴‍☠️ OmO Native) • ~/github.com/minpeter/openaside • main • (codex-lb) gpt-5.6-sol:high • fallback: openai-codex/gpt-5.6-sol Pursuing goal (1h 29m)
+────────────────────────────────────────────────────────────────────────────
+(🏴‍☠️ OmO Native) • ~/github.com/minpeter/openaside • main • Goal achieved (2m)
+";
+
+    let explain = explain(Agent::Senpi, screen);
+
+    assert_eq!(explain.state, AgentState::Idle);
+    assert!(explain.matched_rule.is_none());
+    assert!(!explain.visible_working);
+}
+
+// Reduced from .local/qa/review-fixes/live-red-corrected.json. Use the
+// bundled rules directly: a user's persistent override must not certify a build.
+fn senpi_review_explain(screen: &str) -> DetectionExplain {
+    let manifest = parse_manifest(include_str!("../manifests/senpi.toml")).unwrap();
+    let loaded = loaded_manifest(manifest, ManifestSource::Bundled, None, None, false).unwrap();
+    evaluate_loaded_manifest(
+        Agent::Senpi,
+        DetectionInput {
+            screen,
+            osc_title: "",
+            osc_progress: "",
+        },
+        loaded,
+        false,
+    )
+}
+
+fn senpi_review_screen(above: &str, body: &str, below: &str) -> String {
+    let border = "─".repeat(40);
+    format!("{above}{border}\n{body}\n{border}\n{below}")
+}
+
+#[test]
+fn senpi_review_wrapped_permission_controls_are_blocked() {
+    let screen = senpi_review_screen(
+        "",
+        "\n Permission required: bash\n\n Command: $ printf hello\n\n → Allow once\n   Allow always\n   Deny\n   Deny with feedback\n\n ↑↓ navigate  enter select  esc/ctrl+c\n cancel\n",
+        "fixture-model\n",
+    );
+    let result = senpi_review_explain(&screen);
+    assert_eq!(result.state, AgentState::Blocked);
+    assert!(result.visible_blocker);
+}
+
+#[test]
+fn senpi_review_long_permission_metadata_and_children_are_blocked() {
+    let commands = " printf hello\n".repeat(20);
+    let screen = senpi_review_screen(
+        "",
+        &format!("\n Permission required: bash\n\n Command: $ printf hello\n{commands}\n → Allow once\n   Allow always\n   Deny\n   Deny with feedback\n\n ↑↓ navigate  enter select  esc/ctrl+c cancel\n"),
+        " ⠋ child · agent:qa · running · 1s\nfixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Blocked);
+}
+
+#[test]
+fn senpi_review_feedback_remains_blocked_while_tool_waits() {
+    let screen = senpi_review_screen(
+        "\n ⠋ Running eval\n",
+        "\n Feedback\n\n>\n\n enter submit  esc/ctrl+c cancel\n",
+        "fixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Blocked);
+}
+
+#[test]
+fn senpi_review_pasted_internal_border_does_not_expose_editor_text() {
+    let screen = senpi_review_screen(
+        "",
+        "❯ Pasted status:\n  ⠋ Running eval\n  ────────────────────────────────────\n  Explain this output.",
+        "fixture-model\n",
+    );
+    let result = senpi_review_explain(&screen);
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_review_completed_shell_output_is_not_a_primary_loader() {
+    let shell = senpi_review_screen("", " $ printf retained-output\n\n ⠋ Working\n", "");
+    let screen = senpi_review_screen(&shell, "❯", "fixture-model\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+#[test]
+fn senpi_review_wrapped_retry_is_working() {
+    let screen = senpi_review_screen(
+        "\n ⠋ Retrying (1/3) in 60s... (esc to\n cancel)\n",
+        "❯",
+        "fixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_wrapped_branch_summary_is_working() {
+    let screen = senpi_review_screen(
+        "\n ⠋ Summarizing branch... (ctrl+x to\n cancel)\n",
+        "❯",
+        "fixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_eval_summary_can_contain_middle_dots() {
+    let screen = senpi_review_screen("", "❯", "↗ js · Compile · test (1m)\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_eval_remains_working_with_paused_or_blocked_goal() {
+    for goal in ["Goal paused (/goal resume)", "Goal blocked: input needed"] {
+        let screen = senpi_review_screen("", "❯", &format!("↗ js · Report (1m) {goal}\n"));
+        assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+    }
+}
+
+#[test]
+fn senpi_review_completed_goal_eval_collision_keeps_conservative_fallback() {
+    // The live-eval + completed-goal and completed-only source formatters emit
+    // these identical bytes. This is a false-positive guard, not a liveness fix.
+    let screen = senpi_review_screen("", "❯", "↗ js · Report (1m) Report · Goal achieved\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+#[test]
+fn senpi_review_completed_goal_mimicking_an_eval_stays_idle() {
+    let screen = senpi_review_screen(
+        "",
+        "❯",
+        "(😺 OmO Native) ↗ js · report (1m) · Goal achieved (1m)\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+fn senpi_review_btw(status: &str) -> String {
+    senpi_review_screen(
+        "",
+        &format!(" btw: Review progress?\n Answer one\n Answer two\n Answer three\n {status}"),
+        "",
+    )
+}
+
+#[test]
+fn senpi_review_answering_btw_and_todo_work_in_either_order() {
+    let panel = senpi_review_btw("answering… (Esc to cancel)");
+    let todo = " Todo\n QA\n [ ] Check detection\n";
+    for above in [format!("{panel}{todo}"), format!("{todo}{panel}")] {
+        let screen = senpi_review_screen(&above, "❯", "fixture-model\n");
+        assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+    }
+}
+
+#[test]
+fn senpi_review_terminal_btw_does_not_match_quoted_working_or_cancellation() {
+    for terminal in [
+        "(dismisses on next message)",
+        "(dismissed)",
+        "error: unavailable",
+    ] {
+        let panel = senpi_review_btw(&format!(
+            "⠋ Working\n answering… (Esc to cancel)\n {terminal}"
+        ));
+        let screen = senpi_review_screen(
+            &format!("{panel} Todo\n QA\n [ ] Check detection\n"),
+            "❯",
+            "fixture-model\n",
+        );
+        assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+    }
+}
+
+#[test]
+fn senpi_review_compaction_above_retained_btw_is_working() {
+    let panel = senpi_review_btw("(dismisses on next message)");
+    let screen = senpi_review_screen(
+        &format!("  ⠋ Compacting context... (esc to cancel)\n{panel}"),
+        "❯",
+        "fixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_wrapped_dag_header_with_narrow_native_child_is_working() {
+    let screen = senpi_review_screen("", "❯", " ▶ Review pipeline rendering audit\n running wave 1/1 0/1 done, 1 running\n   ▶ Review child · agent:qa · 1m 0s\n ⠋ Review child ·\n agent:qa(xai/grok-4)...\nfixture-model\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_wrapped_dag_suspension_cannot_borrow_a_live_node() {
+    let screen = senpi_review_screen("", "❯", " · Review pipeline rendering audit\n suspended · 1 active wave 1/1 0/1\n done, 1 running\n   ▶ Review child · agent:qa · 1m 0s\n ⠋ Review child ·\n agent:qa(xai/grok-4)...\nfixture-model\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+#[test]
+fn senpi_review_dag_header_cannot_borrow_a_node_from_another_run() {
+    let screen = senpi_review_screen("", "❯", " ▶ first running wave 1/1 0/1 done, 1 running\n · second suspended · 1 active wave 1/1 0/1 done, 1 running\n   ▶ Review child · agent:qa · 1m 0s\nfixture-model\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+#[test]
+fn senpi_review_regions_require_engine_four() {
+    for name in [
+        "senpi_current_dialog",
+        "senpi_current_status",
+        "senpi_current_btw_panel",
+        "senpi_current_footer",
+    ] {
+        let rules = format!("[[rules]]\nid = \"region\"\nstate = \"working\"\nregion = \"{name}\"\ncontains = [\"ready\"]\n");
+        assert!(
+            parse_manifest(&format!("id = \"senpi\"\nmin_engine_version = 4\n{rules}")).is_ok()
+        );
+        assert!(
+            parse_manifest(&format!("id = \"senpi\"\nmin_engine_version = 3\n{rules}")).is_err()
+        );
+        assert!(parse_manifest(&format!("id = \"senpi\"\n{rules}")).is_err());
+    }
+}
+
+#[test]
 fn rule_semantics_apply_gates_priority_and_line_regex() {
     with_manifest_dirs("rule-semantics", || {
         write_local_codex(&rules_manifest(
@@ -1263,4 +1558,206 @@ fn codex_osc_working_beats_weak_blocker_screen() {
         result.matched_rule.as_ref().map(|r| r.id.as_str()),
         Some("osc_title_working")
     );
+}
+
+#[test]
+fn senpi_interrupt_suffix_working() {
+    let screen = "• Working (4m 27s • esc to interrupt)\n\
+        Tip: Open the model selector with ctrl+l\n\
+        ❯\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|r| r.id.as_str()),
+        Some("interrupt_suffix_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_pasted_interrupt_suffix_does_not_trigger_working() {
+    let screen = "────────────────────────────────────────────────\n\
+        ❯ Pasted status:\n\
+          • Working (4m 27s • esc to interrupt)\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_working_literal_prose_does_not_trigger_working() {
+    let screen = "The documentation says Working... while a task is active.\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_compacting_context_spinner_is_working() {
+    let screen =
+        "TPS 44.9 tok/s. Cache hit 86.6%, 313.4s\n  ⠙ Compacting context... (esc to cancel)\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/clawroid/bori\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - bori", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("compacting_context_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_compacting_short_label_with_stale_tail_is_working() {
+    let screen =
+        "Queued message for after compaction\n\
+        Steering: 음 그렇군\n\
+          ⠦ Compacting... (esc to cancel) ent benchmark implementation - Registered active HEAVY goal\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/pss-runtime\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - pss-runtime", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("compacting_context_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_compacting_wrapped_stale_tail_is_working() {
+    let screen = "  ⠦ Compacting... (esc to cancel) ent benchmark imple\n\
+        mentation\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/pss-runtime\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - pss-runtime", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("compacting_context_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_compacting_context_prose_does_not_trigger_working() {
+    let screen = "────────────────────────────────────────────────\n\
+        ❯ Goal: detect `Compacting context... (esc to cancel)` as working.\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/clawroid/bori\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - bori", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_pasted_short_compaction_row_does_not_trigger_working() {
+    let screen = "────────────────────────────────────────────────\n\
+        ❯ Pasted status:\n\
+          ⠦ Compacting... (esc to cancel) ent benchmark implementation\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/pss-runtime\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - pss-runtime", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_active_subagent_row_is_working() {
+    let screen = "Todo\n\
+        감사\n\
+        [•] Run independent final review workstreams\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+         ⠏ Oracle이 최종 commit의 목표·byte-parity 제약 검증 · agent:oracle(openai-codex/gpt-5.6-sol:xhigh) · turn 11 (60 tools) · $1.0453 · 44 tok/s · running · 3m 14s\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/ai-sdk-tool-call-middleware\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - middleware", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("active_subagent_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_pasted_subagent_row_does_not_trigger_working() {
+    let screen =
+        "Pasted status:\n ⠏ Oracle review · agent:oracle(openai-codex/gpt-5.6-sol:xhigh) · running · 3m 14s\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/ai-sdk-tool-call-middleware\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - middleware", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_permission_prompt_blocked() {
+    let screen = "Permission required for bash\n\
+        Allow once\n\
+        Allow always\n\
+        Deny\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi", "");
+
+    assert_eq!(result.state, AgentState::Blocked);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|r| r.id.as_str()),
+        Some("permission_prompt_blocked")
+    );
+    assert!(result.visible_blocker);
+}
+
+#[test]
+fn senpi_pasted_permission_options_do_not_trigger_blocked() {
+    let screen = "────────────────────────────────────────────────\n\
+        ❯ Permission example:\n\
+          Allow once\n\
+          Allow always\n\
+          Deny\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_blocker);
+}
+
+#[test]
+fn senpi_idle_fallback_when_no_rules_match() {
+    let screen = "❯\n\
+        (🏴‍☠️ OmO Native) • ~/github.com\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Idle);
 }

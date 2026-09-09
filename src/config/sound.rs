@@ -144,6 +144,7 @@ impl AgentSoundOverrides {
             Some(Agent::Qwen) => self.qwen,
             Some(Agent::Maki) => self.maki,
             Some(Agent::Muse) => self.muse,
+            Some(Agent::Senpi) => AgentSoundSetting::Default,
             None => AgentSoundSetting::Default,
         }
     }
