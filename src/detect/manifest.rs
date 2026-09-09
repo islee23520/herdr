@@ -1424,11 +1424,8 @@ fn before_current_prompt_marker(content: &str) -> &str {
     let Some(index) = current_codex_prompt_index(&lines) else {
         return content;
     };
-    let byte_offset = lines[..index]
-        .iter()
-        .map(|line| line.len() + 1)
-        .sum::<usize>();
-    &content[..byte_offset.min(content.len())]
+    let byte_offset = line_start_offset(content, &lines, index);
+    &content[..byte_offset]
 }
 
 fn whole_recent_without_current_prompt_marker(content: &str) -> &str {
@@ -1503,12 +1500,11 @@ fn above_prompt_box(content: &str) -> &str {
 fn after_last_horizontal_rule(content: &str) -> &str {
     let mut last_rule_end = 0usize;
     let mut offset = 0usize;
-    for line in content.lines() {
-        let next_offset = offset + line.len() + 1;
+    for line in content.split_inclusive('\n') {
+        offset += line.len();
         if is_horizontal_rule(line) {
-            last_rule_end = next_offset.min(content.len());
+            last_rule_end = offset;
         }
-        offset = next_offset;
     }
     &content[last_rule_end..]
 }
@@ -1561,11 +1557,10 @@ fn slice_from_line_index<'a>(content: &'a str, lines: &[&str], index: usize) -> 
 }
 
 fn line_start_offset(content: &str, lines: &[&str], index: usize) -> usize {
-    lines[..index.min(lines.len())]
-        .iter()
-        .map(|line| line.len() + 1)
-        .sum::<usize>()
-        .min(content.len())
+    // These lines borrow from content; their starts retain the actual LF/CRLF offsets.
+    lines.get(index).map_or(content.len(), |line| {
+        line.as_ptr() as usize - content.as_ptr() as usize
+    })
 }
 
 #[cfg(test)]

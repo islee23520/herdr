@@ -868,6 +868,114 @@ contains = [{matchers}]
 }
 
 #[test]
+fn horizontal_rule_region_preserves_line_endings_and_utf8() {
+    for (content, expected) in [
+        ("", ""),
+        ("é\r\n日本語", "é\r\n日本語"),
+        ("─\n❯\n─\n😺\n", "😺\n"),
+        ("─\r\n❯\r\n─\r\n😺\r\n", "😺\r\n"),
+        ("─\r\n❯\n─\r\n😺", "😺"),
+        ("é\r\n───", ""),
+        ("é\r\n───\r\n", ""),
+        ("é\n───\n", ""),
+        ("───\r", ""),
+    ] {
+        assert_eq!(after_last_horizontal_rule(content), expected, "{content:?}");
+    }
+}
+
+#[test]
+fn region_slices_preserve_line_endings_and_utf8() {
+    for newline in ["\n", "\r\n"] {
+        for trailing in ["", newline] {
+            for (spec, content, expected) in [
+                ("bottom_lines(2)", "é\n\né\n日本語", "é\n日本語"),
+                ("bottom_non_empty_lines(2)", "é\n\né\n日本語", "é\n日本語"),
+                (
+                    "top_non_empty_lines(2)",
+                    "\né\n\n日本語\né",
+                    "\né\n\n日本語\n",
+                ),
+                (
+                    "after_last_prompt_marker",
+                    "é\n› old\né\n› new\n日本語",
+                    "日本語",
+                ),
+                (
+                    "before_current_prompt_marker",
+                    "é\n• 日本語\n› new\nfooter",
+                    "é\n• 日本語\n",
+                ),
+                (
+                    "after_current_prompt_block_marker",
+                    "é\n• 日本語\n› new\nfooter",
+                    "• 日本語\n› new\nfooter",
+                ),
+                ("prompt_box_body", "é\n───\n❯ 日本語\n───\n😺", "❯ 日本語\n"),
+                ("above_prompt_box", "é\n───\n❯ 日本語\n───\n😺", "é\n"),
+            ] {
+                let includes_end = content.ends_with(expected);
+                let mut expected = expected.replace('\n', newline);
+                if includes_end {
+                    expected.push_str(trailing);
+                }
+                let content = format!("{}{trailing}", content.replace('\n', newline));
+                assert_eq!(
+                    region(
+                        DetectionInput {
+                            screen: &content,
+                            osc_title: "",
+                            osc_progress: ""
+                        },
+                        spec
+                    ),
+                    expected,
+                    "{spec}: {content:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn line_offsets_preserve_mixed_line_endings_and_eof() {
+    for content in [
+        "",
+        "\n",
+        "\r\n",
+        "é\r\n\n日本語\n😺\r\né\r",
+        "é\n\r\n日本語\r\n",
+    ] {
+        let lines: Vec<&str> = content.lines().collect();
+        let mut offset = 0;
+        for (index, chunk) in content.split_inclusive('\n').enumerate() {
+            assert_eq!(line_start_offset(content, &lines, index), offset);
+            assert_eq!(
+                slice_from_line_index(content, &lines, index),
+                &content[offset..]
+            );
+            offset += chunk.len();
+        }
+        for index in [lines.len(), lines.len() + 1] {
+            assert_eq!(line_start_offset(content, &lines, index), content.len());
+            assert_eq!(slice_from_line_index(content, &lines, index), "");
+        }
+    }
+}
+
+#[test]
+fn senpi_goal_continuation_accepts_crlf_utf8() {
+    let screen = "───\r\n❯\r\n───\r\nproject footer\r\n(😺 OmO Native) Pursuing goal (17m) ▰▰▰▱ goal continues in 1m 50s\r\n";
+    let explain = senpi_review_explain(screen);
+    assert_eq!(explain.state, AgentState::Working);
+    assert!(explain.visible_working);
+    assert_eq!(
+        explain.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("goal_continuation_working")
+    );
+}
+
+#[test]
 fn bottom_non_empty_lines_uses_bottom_occurrence_for_repeated_text() {
     let content = "marker\nold\n\nmiddle\nmarker\nnew\n";
 
