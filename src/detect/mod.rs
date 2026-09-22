@@ -680,6 +680,20 @@ fn agent_name_from_known_package_path(path: &str) -> Option<String> {
         .into_iter()
         .map(normalized_agent_lookup_name)
         .collect();
+    for window in components.windows(6) {
+        if window
+            == [
+                "node_modules",
+                "@code-yeongyu",
+                "senpi",
+                "dist",
+                "bundle",
+                "cli",
+            ]
+        {
+            return Some(agent_label(Agent::Senpi).to_string());
+        }
+    }
     for window in components.windows(5) {
         if window
             == [
@@ -1541,6 +1555,28 @@ mod tests {
     }
 
     #[test]
+    fn identify_agent_in_job_detects_bun_wrapped_senpi_bundle_cli() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 43,
+            processes: vec![foreground_process(
+                43,
+                "bun",
+                &[
+                    "/Users/herdr/.bun/bin/bun",
+                    "/Users/herdr/.bun/install/global/node_modules/@code-yeongyu/senpi/dist/bundle/cli.js",
+                    "--extension",
+                    "/Users/herdr/.bun/install/global/node_modules/omo-ai/plugin",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Senpi, "omo".to_string()))
+        );
+    }
+
+    #[test]
     fn identify_agent_in_job_detects_node_wrapped_senpi_package_cli() {
         let job = crate::platform::ForegroundJob {
             process_group_id: 42,
@@ -1560,6 +1596,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn identify_agent_in_job_detects_node_wrapped_mastracode_package_cli() {
         let job = crate::platform::ForegroundJob {
             process_group_id: 123,
